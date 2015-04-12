@@ -1,0 +1,550 @@
+* Top Ten Things every new elisp programmer should know
+** Motivation:
+*** Document my experience
+I Recenty learned elisp myself, and I am just trying to document some of the things that gave me trouble before I forget, or I lose my "beginner's" perspective.
+*** Help avoid unnecssary "incidental complexity"
+ "incidental complexity " can be avoided vs essential complexity", which you can't.
+*** Give you a flavor of what elisp is like
+Assuming you've never worked with it before
+** Overview:
+*** For each item:
+**** Describe the problem
+**** Analyze the problem 
+**** Bottom line: what to do
+*** "In-Depth" sections as they come up
+*** Soapboxes, where I exress some opinions.
+*** Presented in a "Literate" programming syle
+**** TODO: note similiarity between org mode and paredit and paren structure
+**** Org-mode using a mixture of text and code
+** The Top Ten List
+*** 1) Appreciate emacs' unified interaction/programming model
+**** Problem: You don't realize interacting with and scripting emacs are the same thing
+**** Analysis
+When it comes time to scripting something in emacs, you can just automate the process that you do
+interactively.  Everything you do in emacs calls a function.  When you write a sript, just use c-h k
+to determine the function for that keypress and add it to your script.
+
+As simple as this is, I don't know of any other environemt where you can do this e.g Microsoft excel:
+editing cells
+writing macros
+
+**** Bottom Line:
+Appreciate this beautiful feature of emacs: a unified programming model
+**** In Depth: Actual automation example
+  (defun vt-fmt-3 ()
+    (with-current-buffer (get-buffer-create "vt-eval-buf")
+      (erase-buffer)
+      ;; we need to eval the clojure string into elisp enviornment and bind to
+      ;; to the same name ('vt-gen-elisp-init-globals) on the elisp side (since we only
+      ;; get the value and not the name of its symbol from clj)
+      (insert "(setq vt-gen-elisp-init-globals '")
+      (insert (vt-gen-elisp-init-globals))
+      (insert ")")
+      (eval-buffer)
+      ;; at this point 'vt-gen-elisp-init-globals is known (and has a value) in elisp.
+      ;; now we want to create another buffer to insert the first element of
+      ;; 'vt-gen-elisp-init-globals into
+      (with-current-buffer (get-buffer-create "vt-format-buf")
+        (erase-buffer)
+        (insert (format ";;generated: %s" (format-time-string "%Y-%m-%d %T")))
+        (insert (format "%s" (nth 0 vt-gen-elisp-init-globals)))
+        ;; and format it
+        (elisp-format-buffer)
+        ;; additional formatting
+        (goto-char (point-min))
+        (replace-regexp "^[ ]*" "")
+        (write-file "/home/vturner/vtstuff/org_mode_files/clojure/projects/casc-gen-org/resources/gen-code/elisp/casc.el" nil)
+        ;; finally, eval the buffer to make it known to the repl
+        (eval-buffer))))
+*** 2) Setting variables
+**** Problem: confusion on how to set a variable
+***** set, setq, setf, fset
+;; 3 ways to set a variable
+(set 'a 1)  ;; set
+(setq a 2)  ;; set quote
+(setf a 3)  ;; cl (common lisp) set macro
+
+;; fset really has nothing to do with assigning a value to a variable like the other three.
+;; it is rarely used.  It's a way to set the function value of a symbol.
+(fset 'a (lambda () (+ 10 10)))
+
+Note: use
+(makunbound 'my-var)  ;; to delete var binding
+(fmakunbound 'my-fun) ;; to delete function binding
+
+Note 2: While these set methods are all descructive, don't forget that most elisp functions are not.  Thus if you want to increment a you have to say:
+(setq a (1+ a))
+
+i.e if you simply say
+(1+ a)  ;; unlike a++
+
+This will return an incemented value of a, but leave the original a unaltered.
+
+**** Analysis:
+***** set and setq
+The main native elisp way to set a symbol.  'setq' is more convenient since you don't have to quote the symbol.
+
+***** setf
+****** setf can assign a symbol from a list
+setf is from common lisp.  One advantage it has over setq is that the symbol arg can be something other than a symbol literal. For instance, it can be a symbol extracted from a list:
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(setq a '(1 2 3))
+(setf (car a) 15)
+a
+#+END_SRC
+
+#+RESULTS:
+| 15 | 2 | 3 |
+
+****** setq cannot
+You cannot do this with setq:
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(setq a '(1 2 3))
+(setq (car a) 14)
+a
+#+END_SRC
+
+#+RESULTS:
+Wrong type argument: symbolp (car a)
+
+**** Bottom Line:
+use setq
+**** In Depth: Symbols: Identity, State, and Value.
+fset is a way to set the 'function component of the symbol data structure:
+
+Given:
+(progn
+  (setq a 1)
+  (message "a-global=%d" a)
+  (let ((a 3))
+    (message "a-local-2=%d" a)
+    (let ((a 4))
+      (message "a-local-2a=%d" a)
+      (let ((b 10))
+        (message "a-3=%d" a)
+        (message "b-local-3=%d" b)
+        (setq a 17)
+      )
+      (message "a-local-2b=%d" a)
+)))
+
+Result:
+a-global=1
+a-local-2=3
+a-local-2a=4
+a-3=4
+b-local-3=10
+a-local-2b=17
+
+Data Structure for symbol 'a:
+
+| <component> | <value>               |
+|-------------+-----------------------|
+| name        | a                     |
+| value       |                       +------------+
+| function    | (lambda () foo (blah) |            |
+| plist       | (private t foo 1)     |            |
+                                                   v
+          Identity                   +--------------------------+
+                                     |     values               |
+                                     |    +- -+        +- -+    |
+                                     |    | 1 |        | 3 |    |
+                                     |    +- -+        +-|-+    |
+                                     |                   v      |
+                                     |    global       +---+    |
+                                     |                 | 4 |-->17(overlay)
+                                     |                 +-+-+    |
+                                     |                          |
+                                     |              let-locals
+                                     |                          |
+                                     |                          |
+                                     |         stack            |
+                                     +--------------------------+
+                                               state
+
+A symbol and its values (state) are separate thing. The symbol is not its value.  At any
+given place and time (extent) in the code, the symbol will be associated with a particular value.
+The values for a symbol are like a quantum wave -- it is simulataneously associated with
+all its possible values.  Only when you reference the symbol at a particular scope does the
+wave "collapse".
+
+Here is how most people think of variables in other languages:
+| <name> | <value |
+|--------+--------|
+| a      |      1 |
+
+| <name> | <value |
+|--------+--------|
+| a      |      3 |
+
+*** 3) defvar vs defconst (vs. setq)
+**** Background
+Ideally, to program in a non-mutable and pure functional way, you should avoid the use of setq.  Non-local variables (or variables that are not obtained with 'let) are global in emacs.  This is why you should fully qualify all your variables and functions with your own high-level-qualifer.
+
+It is recommended that all "top-level" global vars in your app are intialized with 'defvar instead of 'setq (and, by convention, that they all named like "*my-var*")
+
+**** Problem: defvar doesn't seem to update the variable.
+
+A) We start of making sure symbol 'a is not defined
+#+BEGIN_SRC emacs-lisp :tangle yes
+(makunbound 'a)
+a
+#+END_SRC
+
+#+RESULTS:
+Symbols value as a variable is void: a
+
+B) Then we set it to a value
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defvar a 1)
+a
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+C) Everything is fine so far.  Now we decide to set a to 2:
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defvar a 2)
+a
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+D) Wait!  it's still set to 1.  What's wrong here?
+When I was first learning elsip this really confused me.  And while it still possible to set the variable using 'setq:
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(setq a 2)
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+I was really trying to understand how things worked in elisp.  And if there were two functions I though I intuitvely understood in elisp it's 'setvar and 'setconst.  I thought maybe the REPL had one set of values and the runtime another, and maybe at runtime it was being set to two etc.
+
+E) To add insult to injury, defconst, which you thing wouldn't let you change it, is easily changeable:
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defconst b 1)
+b
+#+END_SRC
+
+#+RESULTS:
+: 1
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defconst b 2)
+b
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+E) so defvar, asides from the initial assignment, is actling like what I though 'defconst should be working like, and 'defconst was acting like 'defvar.
+
+What gives?
+
+**** Analysis:
+***** defvar
+You can think of defvar as a poilite and less-powerful version of 'setq.  The reason for this is elisp uses dynamic scoping (although lexical scoping was recently allowed as an option in v 24.3).  
+
+***** Soapbox
+Oftentimes people refer to dynamic vs lexical *binding*, when they really should be saying dynamic vs. lexical *scoping*.  While there *is* such a thing as "dynamic" binding, this has nothing to do with scoping and is used in contrast to to "static" binding.  Another term for *static* and *dynamic* binding is *early* and *late* binding.  However, when a variable is accessed via dynamic scoping rules it's very common to refer to this as using dynamic binding (or being a "dynamically bound" variable), and likewise to refer to lexically scoped variables as using lexical binding  (or being a "lexically bound" variable).  A bound variable can be accessed either dynamically or lexically in some languages (e.g perl), indicating that this *not* a propery of how the symbol is bound.
+
+binding: on the creating and initializing side i.e. from the symbols perspective.
+scoping: on the reading and mutating side i.e.from the code's perspective.
+
+So pendatically speaking, it's not correct to say "dynamic" binding, although  I often slip into saying it myself.
+
+***** dynamic scoping
+elisp uses dynamic scoping.  What this effectively means is that the called function is expected to use variables set up by the caller.  The caller doesn't have to pass his entire context to the called program.  
+
+defvar is just a way of saying, use the value set by the caller, but if he didn't set it, then just take a default:
+
+An equivalent way to say this in perl is:
+
+my $a = $args->{a} || 1;
+
+Or you could think of 'defvar as saying:
+
+(defvar a <default-value-if-not-set>)
+
+This allows someone to control the behavior of your program (by altering your top-level parameters) by seting vars in the .emacs file for instance.
+
+***** defconst
+defconst is all about intent.  It's a way of saying to any future developers "I intend for this to be considered a constant" (something like PI).  Unfortunately, it has no teeth as far as the runtime environment goes --  it isn't actually enforced.  This is somewhat like declaring a variable as being "private", but having that variable accessible from anywhere.  It's more an annotation in Java -- a hint, but not a commitment.
+
+'defconst is basically just setq, but a "flavor" of setq that sends a message to the programmer.  As far as the OS goes, it's the same thing as a setq.  Thus, it has the full power of setq, which means it can override any value at any time. 
+
+**** Bottom Line:
+***** Use defvar and defconst
+Try to use defvar and defconst.  During development, if you want to alter the values, just use setq (or use 'makunbound).
+
+***** Just use setq
+Not a best practice, but good enough for your first app.  Just be aware of why it's not a good idea.  The world won't come to an end by using setq on a toy app. You don't have to use defvar and defconst in order for your program to operate properly.
+
+*** 4) Use 'message for debugging
+**** Problem: best way to debug.
+You might think that because lisp is such a different langauge than most, debugging will be different.  In particular, you might expect that recursion demands the use of a debugger.
+
+**** Analysis:
+While elisp does have a powerful debugger/tracer in the form of 'edebug, I think easiest to just start out printing messages to the *Messages* just like you do in a perl script.  So the secret here is that there is no secret.  You can just use the standard debugging techniques you've always used.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(let ((msg "abc"))
+    (if (string-equal msg "abc")
+       (progn
+         (message "path 1: msg=%s" msg)
+          "hello"
+         )
+       (progn
+         (message "path 2: msg=%s" msg)
+          "bye")))
+#+END_SRC
+
+Result:
+path 1: msg=abc
+"hello"
+
+**** Soapbox
+In my experience, anytime you *need* to use a debugger either you just don't understand the code enough, or you need to re-factor your code.  Exceptions are made to using the debugger if you simply find it more convenient, or if you are stuck working on someone else's code that you didn't write and cannot re-factor.  In other words, if you *need* to use a debugger, there's something wrong with your code.
+
+**** Bottom Line:
+Use message and *Messages* buffer (C-h e).  Save learning about edbug for later.
+
+*** 5) Evaluating code
+**** Problem: Knowing all the ways to evalate elisp
+| Function       | Key-binding     | Comment                           |
+|----------------+-----------------+-----------------------------------|
+| eval-last-sexp | C-x C-e         | evaluate a single sexp            |
+| eval-defun     | C-M-x           | evaluate an entire defun * note 1 |
+| eval-region    | (type from M-x) | evaluate the selected region      |
+| eval-buffer    | (type from M-x) | evaluate the file                 |
+
+*note 1: prefixing with C-u will invoke the debugger when you run it.  Type C-u C-M-x again to turn it off.  
+
+**** Analysis
+A lot of people don't seem to know about C-M-x.  It's useful for evaluating the defun while you're in the middle of it.  You don't have go to the very end like you do to do a C-x C-e.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defun vt-foo ()
+  (message "hello") ;; can evaluate the code while your cursor's here
+  (+ 1 1))
+#+END_SRC
+
+#+RESULTS:
+: vt-foo
+
+Also, you don't have to select the expression to C-x C-e it
+
+**** Bottom Line:
+use C-x C-e and C-M-x for your workaday evaluation in the REPL.  Use eval-region and eval-buffer for bigger chunks, or when first evaluating a file into the repl.
+
+*** 6) Effectively using the help system.
+**** Problem:
+Emacs help system is just better than any help system out there.  Most people aren't aware of it though because they're just used to googling things.  And while the emacs help system doesn't replace google (for looking up elisp questions), it can be used more often than you think, save you from having to context switch into the brower (and not losing a lot of key-bindings).
+
+***** Soapbox:
+One of the great things about learning elisp, is it makes you aware of several features of emacs that you don't typically need to use for "normal" editing.  The help system is one of these feature you'll need to start learning and exploiting when using elisp.
+
+Learning elisp will make you a much more effective emacs users.  You can then leverage these skills even when you're not working with elisp.
+
+Learning elisp you start to realize the true potential of emacs as a customizable editor.  You'll feel confident to start tweaking your .emacs file.  You'll start writing little functions (as opposed to just one-liners) to help automate your workflow.
+
+Also, if you haven't done so already, map your caps lock key to Ctrl, and start using it.
+
+**** Analysis:
+Here I'm just going to highlight some of the help features I use a lot.
+
+| key-binding | purpose               | Comment                                       |
+|-------------+-----------------------+-----------------------------------------------|
+| tab         | Meta-feature          | used on almost all help commands              |
+| C-h f       | interactive functions | your own defuns will show under here too      |
+| C-u C-h f   | all functions         | not just functions tagged interactive         |
+| C-h v       | for a var             | don't be afraid to use the custom interface   |
+| C-h a       | regex find            | find function containing a string             |
+| C-u C-a     | regex find all        | including non-interactive                     |
+| C-h e       | goto *Messages buffer | easier than C-x b. overlays existing buf      |
+| C-h k       | Key-binding to fun    | when want to know what defun is run for a key |
+| C-h C-h     | see all help command  | meta-help for help system                     |
+
+Tip: type "q" to exit out of help.
+
+#+BEGIN_SRC emacs-lisp :tangle yes
+(require 'gamegrid)
+#+END_SRC
+
+#+RESULTS:
+: gamegrid
+
+demo function:
+gamgrid-init
+
+demo var:
+gamegrid-use-color
+ispell-personal-dictionary
+
+C-h a gamegrid ;; doesn't show anything
+C-u C-h a gamgrid  ;; shows all the gamegrid functions
+
+**** Bottom Line:
+do C-h C-h and see all the things you can do.  Try to resist going to google everytime you want to know something about an emacs function.
+
+**** Soapbox:
+learn key-bindings for browser too. Install Shortcut Mangager (chrome plugin) or some equivalent.
+
+*** 7) Know how to effectively "read" lisp
+**** Problem:
+You can't necessarily "read" lisp the way you do other languages.  If you try to read and understand every part of the "flow" of a program, you can easily get frustrated and/or bogged down.
+
+Accept and understand why lisp can sometimes be "Write Only".
+
+**** Soapbox (or Analysis?)
+For now we'll just consider this to be opinion, and you can choose to disagree with me.  Indeed, I may change my mind after I work further with lisp.
+
+***** Here's an example of what I call code pileon in lisp.
+   (when (or (not (assq 'color-theme-snapshot color-themes))
+	     (not (commandp 'color-theme-snapshot)))
+     (fset 'color-theme-snapshot (color-theme-make-snapshot))
+     (setq color-themes (delq (assq 'color-theme-snapshot color-themes)
+			      color-themes)
+	   color-themes (delq (assq 'bury-buffer color-themes)
+			      color-themes)
+	   color-themes (append '((color-theme-snapshot
+				   "[Reset]" "Undo changes, if possible.")
+				  (bury-buffer
+				   "[Quit]" "Bury this buffer."))
+			      color-themes)))
+
+Source: ~/.emacs.d/elpa/color-theme-20080305.34/
+
+This is what I love about lisp and also what I hate about lisp.  The twelve lines of code here probably does the equivalent of about 80-100 lines of code in a conventional program.  The code is very dense and powerful.  I mean forget python and it's whitespace indentation, this code is at another level of compaction and power.
+
+The problem is you function calls inside of function calls inside of function calls.  And you have to drill down to the bottom level before you can resolve the higher level.
+
+I used to just assume this was because I didn't know lisp well enough, and it would be "obvious" once I understood it better.  I've been working with lisp for several months now, and I can tell that this snippet of code still bends my brain.
+
+I'm not knocking this code.  I assume it's written in the proper idiomatic style, by someone who is much better at lisp than I am.
+
+***** Some reasons Lisp is written in this style
+****** Functional programming style
+In pure functional programming (FP) you are never supposed to mutate something once you set it.  Impreative style programming, where mutation is acceptable, allows for distruted mutation.  That is to say you would typically break an expression like above into several independent steps, and even distribute the mutation throughout the entire program.  This makes each step easier to understand.  In FP, you have one shot to init a var, so you better make it good one.  Thus you pile up all the mutations and steps into a single all-singing, all-dancing one-liner.
+
+The polite term for this is called "functional composition"
+
+I think it's a cultural thing too.  I think people get used to writing in this fashion and do it even when it's strictly not necessarily (?)
+
+****** Lisp code is written incrementally
+This is encourgage by REPL based development.  I've found that I've naturally started expressions like the one above.  And while I understood and could justify every step, even I, as the person who wrote, could barely understand what I wrote in the end just after I wrote it, much less six months later.  Thus lisp can become "write-only", which is something perl is accused of too.
+
+****** Lisp encourges creation of DSL's
+The downside here is you have to know all these DSL's.  It seems that like in every complicated code stanza there always one function I don't know or am not familiar with.  This can block from understanding the workflow until you understand that one function.  It's like a chain is only as strong as it's weakest link.
+
+**** Bottom Line:
+- Just realize the lisp can sometimes be hard.  
+- Don't necessarily try to understand every instruction.  
+- Try find a pattern, and think about what the program is trying to do.  
+- Try running the function from the repl and just see what value it returns as a proxy
+- Don't get discouraged or overly frustrated
+- There are probably good reasons why the code is written this way.  The author is just trying to impress you, or piss you off i.e. there's no evilness involved.
+- Realize that Lisp's ultimate strengths lie as a langage for creating other languages.  It is not necessarily any easier for writing "traditional" programs.  That's not really where it's strength lies.
+
+*** 8) Know what the (interactive) tag does
+**** Problem: What does that damned "(interacive)" thing mean?
+I saw it all over the place when I browsed through code.  I didn't undertand when you needed it and when you didn't.  For some reason, I didn't find out the answer for a long time.  It's not a big deal (knowing it or not knowing it), but it just bugged me.
+**** Analysis:
+Interactive is a marker and helper function for functions you want to be runnable from the minibuffer (M-x), as well as still be able to run from a script via the API.
+
+The following can be run from a script:
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defun vt-foo (name)
+  "demo function"
+  (interactive "sname: ")
+  (message (format "your name is %s" name)))
+
+(vt-foo "steve")
+#+END_SRC
+
+#+RESULTS:
+: your name is steve
+
+But also from the minibuffer.
+
+If you do C-h f "vt-foo", you'll notice the function is marked as "interactive"
+#+BEGIN_SRC emacs-lisp :tangle yes
+(defun vt-foo-2 (name)
+  ;;(interactive "sname: ")
+  (message (format "your second name is %s" name))
+  )
+#+END_SRC
+
+This function cannot be run from mini-buffer.
+Also note how running C-h a "foo" does not show this function.  You need to run C-u C-h a "foo" in order to see it.
+
+**** Bottom Line:
+mark any function you want to run from the command prompt as (interactive) on the first line.  You will still be able to run from a program, but you will have to pass the arg.
+*** 9) Don't get too hung up on Recursion.
+**** Problem:
+You've heard that recursion is core and essence of fucntional programming.  Therefore, it's important for you, as soon as possible, to start playing around with recursion and to deeply understand it.
+**** Analysis
+***** Modern day FP doesn't always emphasize the same things as previous generation of FP
+Modern day lisps like clojure explicitly deeamphasize recursion in favor of using solution involving higher order functions like 'map :
+
+"Recursion is often viewd as a low-level operation reserved for times when solutions involving higher-order functions either fail or lead to obfusicaiton."
+
+- The Joy of Clousure, p. 155
+
+***** Recursion is still important though
+Just may not want to do it as the first thing.  The first I did was try to count (programatically) the number of items in a list like so:
+
+(1 2 (1 2 3) (a (b (c) d)))
+
+In other words, a simple list of scalars and arbitrarily nested lists.  A classic case for recursion.  It took me hours how to get it to work. It was a valuable learning exercizes, if perhaps needlessy frustrating.  I might have been better served by just starting with more traditional apps, like animating a char in a buffer before starting off with recursion out of the gate.
+
+***** Soapbox
+I think DSLs, macros, and code generation are more about what Lisp is all about
+
+**** Bottom Line:
+Recursion is still important, but maybe not as vital as you might think if you been exposed to lisp a long time ago.
+*** 10) Write a game for your first app
+**** Problem:
+You don't find inserting things into buffers, or moving cursors around very motivating.
+**** Analysis
+*****  Write a game
+Write a game.  Yes, it will need to be a character based game, but tetris has a psuedo graphical mode, like the one used by the standard "tetris" game supplied.
+***** Write a game in Clojure or ClojureScript
+Yes, it's not elisp. But it is lisp.  If you Clojure you have full access to all java libraries and can write a "real" game including calling game engines.  If you use ClojureScript you have full access to all javascript librares, and html5 technolgies such as web/GL and Three.js
+
+*** 11) Things to put on your radar map in the future
+**** Problem: What things should I learn next after learning the fundamentals
+**** Analysis:
+The following are very important to being an effective elisper:
+- paredit/smartparents
+- edebug
+- macros/ meta-programming
+- Watch "The Structre and Interpretation of Computer Programs" (SICP) on You Tube
+   -- The Feynman lectures of Computer Science.
+
+There are others of course.  The point I would make is probably not trying to learn this stuff on the first go-round, but defintely early on in your second phase.  Particulary paredit, which is just extremely useful if you're going to really start coding in Lisp.  However, there's a bit of learning curve (indeed I'm still trying to "master" smartparens).  Trying to learn all this out of the gate is probably too much to ask for.  Pace yourself and there'll be time to learn this later
+
+I would also suggest learning Clojure once you get a basic proficiency in elisp, or even quite honestly just starting with clojure.  Emacs readily support clojure, and has a first-class development environement in the form of cider.  You can also interop with elisp and emacs itself (to open a buffer say) using "clomacs" which is an emacs package available under github.
+
+** In Conclusion
+*** Lisp is a beautifal language
+You'll appreciate how such a few basic concepts can lead to so much power.
+
+*** Lisp is an adult language
+It's not as intimidating as some make it to be, but it is powerful.  And that makes it harder to learn.
+
+*** Your knowledge of emacs will go up.
+There a whole other half of emacs you only appreciate once you start coding in elisp.
+
+*** Happy Coding
+Hopefully you picked up some things you found useful on your "Journey to Lisp".  
+
+Thank you for watching!
+** TODO: post to github and include the link within the presentation
